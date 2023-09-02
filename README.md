@@ -1,4 +1,4 @@
-# vsgTray
+# vsgTracy
 
 [Tracy](https://github.com/wolfpld/tracy) profiler integration with [VulkanSceneGraph](https://github.com/vsg-dev/VulkanSceneGraph)
 
