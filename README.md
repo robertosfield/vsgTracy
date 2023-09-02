@@ -1,14 +1,14 @@
 # vsgTray
 
-[Tracy](https://github.com/wolfpld/tracy) Profiler integration with [VulkanSceneGraph](https://github.com/vsg-dev/VulkanSceneGraph)
+[Tracy](https://github.com/wolfpld/tracy) profiler integration with [VulkanSceneGraph](https://github.com/vsg-dev/VulkanSceneGraph)
 
-## Checking out vsgImGui
+## Checking out vsgTracy
 
 ~~~ sh
-git clone https://github.com/vsg-dev/vsgImGui.git
+git clone https://github.com/vsg-dev/vsgTracy.git
 ~~~
 
-### Building vsgImGui
+### Building vsgTracy
 
 The first run of cmake will automatically checkout Tracy as submodule when required.
 
