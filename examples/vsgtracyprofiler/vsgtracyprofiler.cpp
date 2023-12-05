@@ -12,6 +12,8 @@
 
 # include <tracy/Tracy.hpp>
 
+# include "TracyRecordTraversal.h"
+
 #include <iostream>
 
 int main(int argc, char** argv)
@@ -157,6 +159,7 @@ int main(int argc, char** argv)
     }
 
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
+    commandGraph->recordTraversal = vsgTracy::TracyRecordTraversal::create();
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
 
     viewer->compile();
@@ -210,7 +213,6 @@ int main(int argc, char** argv)
         double fps = static_cast<double>(fs->frameCount) / std::chrono::duration<double, std::chrono::seconds::period>(vsg::clock::now() - viewer->start_point()).count();
         std::cout<<"Average frame rate = "<<fps<<" fps"<<std::endl;
     }
-
 
 
     return 0;
