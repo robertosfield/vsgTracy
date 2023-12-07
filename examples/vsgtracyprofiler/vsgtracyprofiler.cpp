@@ -148,6 +148,8 @@ int main(int argc, char** argv)
 
     // create the viewer and assign window(s) to it
     auto viewer = vsg::Viewer::create();
+    viewer->instrumentation = TracyInstrumentation::create();
+
     auto window = vsg::Window::create(windowTraits);
     if (!window)
     {
@@ -201,7 +203,8 @@ int main(int argc, char** argv)
     }
 
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
-    commandGraph->getOrCreateRecordTraversal()->instrumentation = TracyInstrumentation::create();
+    commandGraph->instrumentation = TracyInstrumentation::create();
+    commandGraph->getOrCreateRecordTraversal()->instrumentation = commandGraph->instrumentation;
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
 
     viewer->compile();
@@ -215,38 +218,24 @@ int main(int argc, char** argv)
         }
     }
 
+    for(auto& task : viewer->recordAndSubmitTasks)
+    {
+        task->instrumentation = TracyInstrumentation::create();
+    }
+
     viewer->start_point() = vsg::clock::now();
 
+    FrameMark;
+
     // rendering main loop
-    for(;;)
+    while (viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0))
     {
-        {
-            ZoneScopedN("viewer->advanceToNextFrame()");
-            if (!((viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0)))) break;
+        viewer->handleEvents();
+        viewer->update();
+        viewer->recordAndSubmit();
+        viewer->present();
 
-            FrameMark;
-        }
-
-        {
-            ZoneScopedN("viewer->handleEvents()");
-            // pass any events into EventHandlers assigned to the Viewer
-            viewer->handleEvents();
-        }
-
-        {
-            ZoneScopedN("viewer->update()");
-            viewer->update();
-        }
-
-        {
-            ZoneScopedN("viewer->recordAndSubmit()");
-            viewer->recordAndSubmit();
-        }
-
-        {
-            ZoneScopedN("viewer->present()");
-            viewer->present();
-        }
+        FrameMark;
     }
 
     if (reportAverageFrameRate)
