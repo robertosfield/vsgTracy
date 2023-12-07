@@ -22,7 +22,7 @@ You also need to periodically collect the GPU events using the TracyVkCollect(ct
 The provided command buffer must be in the recording state and outside a render pass instance.
 
 Calibrated context In order to maintain synchronization between CPU and GPU time domains, you will
-need to enable the VK_EXT_calibrated_timestamps device extension and retrieve the following function
+need to enable the [VK_EXT_calibrated_timestamps](https://github.com/KhronosGroup/Vulkan-Docs/blob/main/proposals/VK_EXT_calibrated_timestamps.adoc) device extension and retrieve the following function
 pointers: vkGetPhysicalDeviceCalibrateableTimeDomainsEXT and vkGetCalibratedTimestampsEXT.
 To enable calibrated context, replace the macro TracyVkContext with TracyVkContextCalibrated and
 pass the two functions as additional parameters, in the order specified above.
