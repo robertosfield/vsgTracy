@@ -12,9 +12,49 @@
 
 # include <tracy/Tracy.hpp>
 
-# include "TracyRecordTraversal.h"
+#include <vsg/utils/Instrumentation.h>
 
 #include <iostream>
+
+using namespace tracy;
+
+class TracyInstrumentation : public vsg::Inherit<vsg::Instrumentation, TracyInstrumentation>
+{
+public:
+
+    TracyInstrumentation()
+    {
+        vsg::info("tracy TracyInstrumentation()");
+    }
+
+    void enter(const vsg::SourceLocation* sl) const override
+    {
+        #ifdef TRACY_ON_DEMAND
+            // m_connectionId = GetProfiler().ConnectionId();
+        #endif
+        TracyQueuePrepare( QueueType::ZoneBegin );
+        MemWrite( &item->zoneBegin.time, Profiler::GetTime() );
+        MemWrite( &item->zoneBegin.srcloc, (uint64_t)sl );
+        TracyQueueCommit( zoneBeginThread );
+    }
+
+    void leave(const vsg::SourceLocation*) const override
+    {
+    #ifdef TRACY_ON_DEMAND
+        // if( GetProfiler().ConnectionId() != m_connectionId ) return;
+    #endif
+        TracyQueuePrepare( QueueType::ZoneEnd );
+        MemWrite( &item->zoneEnd.time, Profiler::GetTime() );
+        TracyQueueCommit( zoneEndThread );
+    }
+
+protected:
+
+    ~TracyInstrumentation()
+    {
+        vsg::info("tracy ~TracyInstrumentation()");
+    }
+};
 
 int main(int argc, char** argv)
 {
@@ -159,7 +199,7 @@ int main(int argc, char** argv)
     }
 
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
-    commandGraph->recordTraversal = vsgTracy::TracyRecordTraversal::create();
+    commandGraph->getOrCreateRecordTraversal()->instrumentation = TracyInstrumentation::create();
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
 
     viewer->compile();
