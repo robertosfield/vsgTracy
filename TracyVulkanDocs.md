@@ -1,7 +1,7 @@
 
-Details of Vulkan support from the tracy-4.pdf:
+#Details of Vulkan support from the tracy-4.pdf:
 
-3.9.2 Vulkan
+## 3.9.2 Vulkan
 Similarly, for Vulkan support you should include the public/tracy/TracyVulkan.hpp header file. Tracing
 Vulkan devices and queues is a bit more involved, and the Vulkan initialization macro TracyVkContext(physdev,
 device, queue, cmdbuf) returns an instance of TracyVkCtx object, which tracks an associated Vulkan
