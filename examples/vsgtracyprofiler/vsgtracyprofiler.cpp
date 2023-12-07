@@ -27,22 +27,24 @@ public:
         vsg::info("tracy TracyInstrumentation()");
     }
 
-    void enter(const vsg::SourceLocation* sl) const override
+    void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
     {
         #ifdef TRACY_ON_DEMAND
-            // m_connectionId = GetProfiler().ConnectionId();
+        reference = GetProfiler().ConnectionId();
         #endif
+
         TracyQueuePrepare( QueueType::ZoneBegin );
         MemWrite( &item->zoneBegin.time, Profiler::GetTime() );
         MemWrite( &item->zoneBegin.srcloc, (uint64_t)sl );
         TracyQueueCommit( zoneBeginThread );
     }
 
-    void leave(const vsg::SourceLocation*) const override
+    void leave(const vsg::SourceLocation*, uint64_t& reference) const override
     {
-    #ifdef TRACY_ON_DEMAND
-        // if( GetProfiler().ConnectionId() != m_connectionId ) return;
-    #endif
+        #ifdef TRACY_ON_DEMAND
+        if( GetProfiler().ConnectionId() != reference ) return;
+        #endif
+
         TracyQueuePrepare( QueueType::ZoneEnd );
         MemWrite( &item->zoneEnd.time, Profiler::GetTime() );
         TracyQueueCommit( zoneEndThread );
