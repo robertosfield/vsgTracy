@@ -10,7 +10,8 @@
 # define TracyFunction __FUNCSIG__
 #endif
 
-# include <tracy/Tracy.hpp>
+#include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 
 #include <vsg/utils/Instrumentation.h>
 
@@ -25,6 +26,38 @@ public:
     TracyInstrumentation()
     {
         vsg::info("tracy TracyInstrumentation()");
+    }
+
+
+    using Key = std::pair<vsg::ref_ptr<vsg::Device>, vsg::ref_ptr<vsg::Queue>>;
+
+    struct Context
+    {
+        vsg::ref_ptr<vsg::CommandBuffer> commandBuffer;
+        VkCtx* ctx = nullptr;
+    };
+
+    std::map<Key, Context> ctxMap;
+
+    VkCtx* currentContext = nullptr;
+
+    void enterVulkanContext(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Queue> queue) override
+    {
+        auto& context = ctxMap[Key{device, queue}];
+        if (!context.ctx)
+        {
+            // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT might be appropriate too.
+            auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+            context.commandBuffer = commandPool->allocate();
+            context.ctx = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), context.commandBuffer->vk());
+        }
+
+        currentContext = context.ctx;
+    }
+
+    void leaveVulkanContext() override
+    {
+        currentContext = nullptr;
     }
 
     void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
@@ -50,11 +83,66 @@ public:
         TracyQueueCommit( zoneEndThread );
     }
 
+
+    void enter(const vsg::SourceLocation* sl, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        enter(sl, reference);
+
+        if (!currentContext) return;
+
+        const auto queryId = currentContext->NextQueryId();
+        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
+
+        auto item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuZoneBeginSerial );
+        MemWrite( &item->gpuZoneBegin.cpuTime, Profiler::GetTime() );
+        MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)sl );
+        MemWrite( &item->gpuZoneBegin.thread, GetThreadHandle() );
+        MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
+        MemWrite( &item->gpuZoneBegin.context, currentContext->GetId() );
+        Profiler::QueueSerialFinish();
+    }
+
+    void leave(const vsg::SourceLocation* sl, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        #ifdef TRACY_ON_DEMAND
+        if( GetProfiler().ConnectionId() != reference ) return;
+        #endif
+
+        leave(sl, reference);
+
+        if (!currentContext) return;
+
+        const auto queryId = currentContext->NextQueryId();
+        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
+
+        auto item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuZoneEndSerial );
+        MemWrite( &item->gpuZoneEnd.cpuTime, Profiler::GetTime() );
+        MemWrite( &item->gpuZoneEnd.thread, GetThreadHandle() );
+        MemWrite( &item->gpuZoneEnd.queryId, uint16_t( queryId ) );
+        MemWrite( &item->gpuZoneEnd.context, currentContext->GetId() );
+        Profiler::QueueSerialFinish();
+    }
+
+    void collectVulkanTimestamps()
+    {
+        for(auto& context : ctxMap)
+        {
+            TracyVkCollect(context.second.ctx, context.second.commandBuffer->vk());
+        }
+    }
+
 protected:
 
     ~TracyInstrumentation()
     {
         vsg::info("tracy ~TracyInstrumentation()");
+        for(auto itr = ctxMap.begin(); itr != ctxMap.end(); ++itr)
+        {
+            vsg::info("    ", itr->first.first, ", ", itr->first.second, " calling TracyVkDestroy(", itr->second.ctx, ")");
+            TracyVkDestroy(itr->second.ctx);
+        }
     }
 };
 
@@ -148,7 +236,6 @@ int main(int argc, char** argv)
 
     // create the viewer and assign window(s) to it
     auto viewer = vsg::Viewer::create();
-    viewer->instrumentation = TracyInstrumentation::create();
 
     auto window = vsg::Window::create(windowTraits);
     if (!window)
@@ -203,9 +290,24 @@ int main(int argc, char** argv)
     }
 
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
-    commandGraph->instrumentation = TracyInstrumentation::create();
-    commandGraph->getOrCreateRecordTraversal()->instrumentation = commandGraph->instrumentation;
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
+
+    auto instrumentation = TracyInstrumentation::create();
+    viewer->instrumentation = instrumentation;
+
+    // assign instrumentation after settings up recordAndSubmitTasks, but before compile() to allow compile to initialize the Instrumentation with the approach queue etc.
+    for(auto& task : viewer->recordAndSubmitTasks)
+    {
+        task->instrumentation = viewer->instrumentation;
+        if (task->earlyTransferTask) task->earlyTransferTask->instrumentation = task->instrumentation;
+        if (task->lateTransferTask) task->lateTransferTask->instrumentation = task->instrumentation;
+
+        for(auto cg : task->commandGraphs)
+        {
+            commandGraph->instrumentation = task->instrumentation;
+            commandGraph->getOrCreateRecordTraversal()->instrumentation = task->instrumentation;
+        }
+    }
 
     viewer->compile();
 
@@ -216,13 +318,6 @@ int main(int argc, char** argv)
         {
             if (task->databasePager) task->databasePager->targetMaxNumPagedLODWithHighResSubgraphs = maxPagedLOD;
         }
-    }
-
-    for(auto& task : viewer->recordAndSubmitTasks)
-    {
-        task->instrumentation = TracyInstrumentation::create();
-        if (task->earlyTransferTask) task->earlyTransferTask->instrumentation = task->instrumentation;
-        if (task->lateTransferTask) task->lateTransferTask->instrumentation = task->instrumentation;
     }
 
     viewer->start_point() = vsg::clock::now();
@@ -236,6 +331,15 @@ int main(int argc, char** argv)
         viewer->update();
         viewer->recordAndSubmit();
         viewer->present();
+
+        // The Tracy docs just says:
+        //
+        //    You also need to periodically collect the GPU events using the TracyVkCollect(ctx, cmdbuf) macro44.
+        //    The provided command buffer must be in the recording state and outside a render pass instance.
+        //
+        // But... the Tracy code for collecting stats conflates the actual CPU collection of the queried timestamps with clearing of the query pool using a Vulkan cmd.
+        // it's a mess for sure.  May need to break apart some of the Tracy Vulkan code in order to make it behave more sensibly.
+        if (instrumentation) instrumentation->collectVulkanTimestamps();
 
         FrameMark;
     }
