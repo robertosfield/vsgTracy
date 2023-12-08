@@ -221,6 +221,8 @@ int main(int argc, char** argv)
     for(auto& task : viewer->recordAndSubmitTasks)
     {
         task->instrumentation = TracyInstrumentation::create();
+        if (task->earlyTransferTask) task->earlyTransferTask->instrumentation = task->instrumentation;
+        if (task->lateTransferTask) task->lateTransferTask->instrumentation = task->instrumentation;
     }
 
     viewer->start_point() = vsg::clock::now();
