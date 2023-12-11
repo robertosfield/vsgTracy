@@ -29,34 +29,35 @@ public:
     }
 
 
-    using Key = std::pair<vsg::ref_ptr<vsg::Device>, vsg::ref_ptr<vsg::Queue>>;
+    mutable std::map<vsg::ref_ptr<vsg::CommandBuffer>, VkCtx*> ctxMap;
+    mutable VkCtx* currentContext = nullptr;
 
-    struct Context
+    void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
     {
-        vsg::ref_ptr<vsg::CommandBuffer> commandBuffer;
-        VkCtx* ctx = nullptr;
-    };
-
-    std::map<Key, Context> ctxMap;
-
-    VkCtx* currentContext = nullptr;
-
-    void enterVulkanContext(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::Queue> queue) override
-    {
-        auto& context = ctxMap[Key{device, queue}];
-        if (!context.ctx)
+        auto& context = ctxMap[commandBuffer];
+        if (!context)
         {
             // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT might be appropriate too.
+            auto device = commandBuffer->getDevice();
+            auto queue = device->getQueue(commandBuffer->getCommandPool()->queueFamilyIndex, 0);
             auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-            context.commandBuffer = commandPool->allocate();
-            context.ctx = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), context.commandBuffer->vk());
+            auto temporaryCommandBuffer = commandPool->allocate();
+            context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
+
+            vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkContext -> ", context);
+        }
+        else
+        {
+            TracyVkCollect(context, commandBuffer->vk());
+            vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkCollect for ", context);
         }
 
-        currentContext = context.ctx;
+        currentContext = context;
     }
 
-    void leaveVulkanContext() override
+    void leaveCommandBuffer() override
     {
+        vsg::info("leaveCommandBuffer()");
         currentContext = nullptr;
     }
 
@@ -88,8 +89,10 @@ public:
     {
         enter(sl, reference);
 
-        if (!currentContext) return;
+#if 0
+#endif
 
+#if 1
         const auto queryId = currentContext->NextQueryId();
         CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
 
@@ -101,6 +104,7 @@ public:
         MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
         MemWrite( &item->gpuZoneBegin.context, currentContext->GetId() );
         Profiler::QueueSerialFinish();
+#endif
     }
 
     void leave(const vsg::SourceLocation* sl, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
@@ -111,6 +115,7 @@ public:
 
         leave(sl, reference);
 
+#if 1
         if (!currentContext) return;
 
         const auto queryId = currentContext->NextQueryId();
@@ -123,14 +128,7 @@ public:
         MemWrite( &item->gpuZoneEnd.queryId, uint16_t( queryId ) );
         MemWrite( &item->gpuZoneEnd.context, currentContext->GetId() );
         Profiler::QueueSerialFinish();
-    }
-
-    void collectVulkanTimestamps()
-    {
-        for(auto& context : ctxMap)
-        {
-            TracyVkCollect(context.second.ctx, context.second.commandBuffer->vk());
-        }
+#endif
     }
 
 protected:
@@ -140,8 +138,8 @@ protected:
         vsg::info("tracy ~TracyInstrumentation()");
         for(auto itr = ctxMap.begin(); itr != ctxMap.end(); ++itr)
         {
-            vsg::info("    ", itr->first.first, ", ", itr->first.second, " calling TracyVkDestroy(", itr->second.ctx, ")");
-            TracyVkDestroy(itr->second.ctx);
+            vsg::info("    ", itr->first, ", calling TracyVkDestroy(", itr->second, ")");
+            TracyVkDestroy(itr->second);
         }
     }
 };
@@ -331,15 +329,6 @@ int main(int argc, char** argv)
         viewer->update();
         viewer->recordAndSubmit();
         viewer->present();
-
-        // The Tracy docs just says:
-        //
-        //    You also need to periodically collect the GPU events using the TracyVkCollect(ctx, cmdbuf) macro44.
-        //    The provided command buffer must be in the recording state and outside a render pass instance.
-        //
-        // But... the Tracy code for collecting stats conflates the actual CPU collection of the queried timestamps with clearing of the query pool using a Vulkan cmd.
-        // it's a mess for sure.  May need to break apart some of the Tracy Vulkan code in order to make it behave more sensibly.
-        if (instrumentation) instrumentation->collectVulkanTimestamps();
 
         FrameMark;
     }
