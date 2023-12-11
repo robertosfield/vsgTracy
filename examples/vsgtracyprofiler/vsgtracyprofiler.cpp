@@ -87,12 +87,6 @@ public:
 
     void enter(const vsg::SourceLocation* sl, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
     {
-        enter(sl, reference);
-
-#if 0
-#endif
-
-#if 1
         const auto queryId = currentContext->NextQueryId();
         CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
 
@@ -104,19 +98,18 @@ public:
         MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
         MemWrite( &item->gpuZoneBegin.context, currentContext->GetId() );
         Profiler::QueueSerialFinish();
-#endif
+
+        // enter(sl, reference);
     }
 
     void leave(const vsg::SourceLocation* sl, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
     {
+#if 0
         #ifdef TRACY_ON_DEMAND
         if( GetProfiler().ConnectionId() != reference ) return;
         #endif
-
-        leave(sl, reference);
-
-#if 1
-        if (!currentContext) return;
+#endif
+        // leave(sl, reference);
 
         const auto queryId = currentContext->NextQueryId();
         CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
@@ -128,7 +121,6 @@ public:
         MemWrite( &item->gpuZoneEnd.queryId, uint16_t( queryId ) );
         MemWrite( &item->gpuZoneEnd.context, currentContext->GetId() );
         Profiler::QueueSerialFinish();
-#endif
     }
 
 protected:
