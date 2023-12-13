@@ -28,13 +28,18 @@ public:
         vsg::info("tracy TracyInstrumentation()");
     }
 
-
-    mutable std::map<vsg::ref_ptr<vsg::CommandBuffer>, VkCtx*> ctxMap;
+    mutable std::map<vsg::Device*, VkCtx*> ctxMap;
     mutable VkCtx* currentContext = nullptr;
+    mutable std::atomic_int zoneDepth = 0;
+
+    void markFrame()
+    {
+        FrameMark;
+    }
 
     void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
     {
-        auto& context = ctxMap[commandBuffer];
+        auto& context = ctxMap[commandBuffer->getDevice()];
         if (!context)
         {
             // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT might be appropriate too.
@@ -44,6 +49,8 @@ public:
             auto temporaryCommandBuffer = commandPool->allocate();
             context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
 
+            //std::string name("VulkanSceneGraph context");
+            //context->Name(name.c_str(), name.size());
             // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkContext -> ", context);
         }
         else
@@ -53,16 +60,26 @@ public:
         }
 
         currentContext = context;
+
+        ++zoneDepth;
+
+        // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkCollect for ", currentContext, " zoneDepth = ", zoneDepth.load());
     }
 
     void leaveCommandBuffer() override
     {
+        // vsg::info("leaveCommandBuffer() TracyVkCollect for ", currentContext, " zoneDepth = ", zoneDepth.load());
+
         // vsg::info("leaveCommandBuffer()");
         currentContext = nullptr;
+
+        --zoneDepth;
     }
 
     void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
     {
+        ++zoneDepth;
+
         #ifdef TRACY_ON_DEMAND
         reference = GetProfiler().ConnectionId();
         #endif
@@ -71,24 +88,51 @@ public:
         MemWrite( &item->zoneBegin.time, Profiler::GetTime() );
         MemWrite( &item->zoneBegin.srcloc, (uint64_t)sl );
         TracyQueueCommit( zoneBeginThread );
+
     }
 
     void leave(const vsg::SourceLocation*, uint64_t& reference) const override
     {
+        --zoneDepth;
+
+#if 1
         #ifdef TRACY_ON_DEMAND
         if( GetProfiler().ConnectionId() != reference ) return;
         #endif
+#endif
 
         TracyQueuePrepare( QueueType::ZoneEnd );
         MemWrite( &item->zoneEnd.time, Profiler::GetTime() );
         TracyQueueCommit( zoneEndThread );
     }
 
-
-    void enter(const vsg::SourceLocation* slcloc, uint64_t& /*reference*/, vsg::CommandBuffer& commandBuffer) const override
+#if 0
+    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
     {
+        ++zoneDepth;
+
+        enter(slcloc, reference);
+    }
+
+    void leave(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        --zoneDepth;
+
+        leave(slcloc, reference);
+    }
+#else
+    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        #ifdef TRACY_ON_DEMAND
+        reference = GetProfiler().ConnectionId();
+        #endif
+
+        ++zoneDepth;
+
         const auto queryId = currentContext->NextQueryId();
         CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
+
+        // vsg::info("    enter() queryId = ", queryId);
 
         auto item = Profiler::QueueSerial();
         MemWrite( &item->hdr.type, QueueType::GpuZoneBeginSerial );
@@ -102,17 +146,22 @@ public:
         // enter(slcloc, reference);
     }
 
-    void leave(const vsg::SourceLocation* /*slcloc*/, uint64_t& /*reference*/, vsg::CommandBuffer& commandBuffer) const override
+    void leave(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
     {
+        --zoneDepth;
+
 #if 0
         #ifdef TRACY_ON_DEMAND
         if( GetProfiler().ConnectionId() != reference ) return;
         #endif
 #endif
+
         // leave(slcloc, reference);
 
         const auto queryId = currentContext->NextQueryId();
         CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
+
+        // vsg::info("    leave() queryId = ", queryId);
 
         auto item = Profiler::QueueSerial();
         MemWrite( &item->hdr.type, QueueType::GpuZoneEndSerial );
@@ -122,6 +171,7 @@ public:
         MemWrite( &item->gpuZoneEnd.context, currentContext->GetId() );
         Profiler::QueueSerialFinish();
     }
+#endif
 
 protected:
 
@@ -322,7 +372,7 @@ int main(int argc, char** argv)
         viewer->recordAndSubmit();
         viewer->present();
 
-        FrameMark;
+        instrumentation->markFrame();
     }
 
     if (reportAverageFrameRate)
