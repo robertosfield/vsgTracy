@@ -10,11 +10,181 @@
 # define TracyFunction __FUNCSIG__
 #endif
 
-# include <tracy/Tracy.hpp>
+#include <tracy/Tracy.hpp>
+#include <tracy/TracyVulkan.hpp>
 
-# include "TracyRecordTraversal.h"
+#include <vsg/utils/Instrumentation.h>
 
 #include <iostream>
+
+using namespace tracy;
+
+class TracyInstrumentation : public vsg::Inherit<vsg::Instrumentation, TracyInstrumentation>
+{
+public:
+
+    TracyInstrumentation()
+    {
+        vsg::info("tracy TracyInstrumentation()");
+    }
+
+    mutable std::map<vsg::Device*, VkCtx*> ctxMap;
+    mutable VkCtx* currentContext = nullptr;
+    mutable std::atomic_int zoneDepth = 0;
+
+    void markFrame()
+    {
+        FrameMark;
+    }
+
+    void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
+    {
+        auto& context = ctxMap[commandBuffer->getDevice()];
+        if (!context)
+        {
+            // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT might be appropriate too.
+            auto device = commandBuffer->getDevice();
+            auto queue = device->getQueue(commandBuffer->getCommandPool()->queueFamilyIndex, 0);
+            auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+            auto temporaryCommandBuffer = commandPool->allocate();
+            context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
+
+            //std::string name("VulkanSceneGraph context");
+            //context->Name(name.c_str(), name.size());
+            // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkContext -> ", context);
+        }
+        else
+        {
+            TracyVkCollect(context, commandBuffer->vk());
+            // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkCollect for ", context);
+        }
+
+        currentContext = context;
+
+        ++zoneDepth;
+
+        // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkCollect for ", currentContext, " zoneDepth = ", zoneDepth.load());
+    }
+
+    void leaveCommandBuffer() override
+    {
+        // vsg::info("leaveCommandBuffer() TracyVkCollect for ", currentContext, " zoneDepth = ", zoneDepth.load());
+
+        // vsg::info("leaveCommandBuffer()");
+        currentContext = nullptr;
+
+        --zoneDepth;
+    }
+
+    void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
+    {
+        ++zoneDepth;
+
+        #ifdef TRACY_ON_DEMAND
+        reference = GetProfiler().ConnectionId();
+        #endif
+
+        TracyQueuePrepare( QueueType::ZoneBegin );
+        MemWrite( &item->zoneBegin.time, Profiler::GetTime() );
+        MemWrite( &item->zoneBegin.srcloc, (uint64_t)sl );
+        TracyQueueCommit( zoneBeginThread );
+
+    }
+
+    void leave(const vsg::SourceLocation*, uint64_t& reference) const override
+    {
+        --zoneDepth;
+
+#if 1
+        #ifdef TRACY_ON_DEMAND
+        if( GetProfiler().ConnectionId() != reference ) return;
+        #endif
+#endif
+
+        TracyQueuePrepare( QueueType::ZoneEnd );
+        MemWrite( &item->zoneEnd.time, Profiler::GetTime() );
+        TracyQueueCommit( zoneEndThread );
+    }
+
+#if 0
+    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        ++zoneDepth;
+
+        enter(slcloc, reference);
+    }
+
+    void leave(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        --zoneDepth;
+
+        leave(slcloc, reference);
+    }
+#else
+    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        #ifdef TRACY_ON_DEMAND
+        reference = GetProfiler().ConnectionId();
+        #endif
+
+        ++zoneDepth;
+
+        const auto queryId = currentContext->NextQueryId();
+        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
+
+        // vsg::info("    enter() queryId = ", queryId);
+
+        auto item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuZoneBeginSerial );
+        MemWrite( &item->gpuZoneBegin.cpuTime, Profiler::GetTime() );
+        MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)slcloc );
+        MemWrite( &item->gpuZoneBegin.thread, GetThreadHandle() );
+        MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
+        MemWrite( &item->gpuZoneBegin.context, currentContext->GetId() );
+        Profiler::QueueSerialFinish();
+
+        // enter(slcloc, reference);
+    }
+
+    void leave(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
+    {
+        --zoneDepth;
+
+#if 0
+        #ifdef TRACY_ON_DEMAND
+        if( GetProfiler().ConnectionId() != reference ) return;
+        #endif
+#endif
+
+        // leave(slcloc, reference);
+
+        const auto queryId = currentContext->NextQueryId();
+        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, currentContext->m_query, queryId ) );
+
+        // vsg::info("    leave() queryId = ", queryId);
+
+        auto item = Profiler::QueueSerial();
+        MemWrite( &item->hdr.type, QueueType::GpuZoneEndSerial );
+        MemWrite( &item->gpuZoneEnd.cpuTime, Profiler::GetTime() );
+        MemWrite( &item->gpuZoneEnd.thread, GetThreadHandle() );
+        MemWrite( &item->gpuZoneEnd.queryId, uint16_t( queryId ) );
+        MemWrite( &item->gpuZoneEnd.context, currentContext->GetId() );
+        Profiler::QueueSerialFinish();
+    }
+#endif
+
+protected:
+
+    ~TracyInstrumentation()
+    {
+        // vsg::info("tracy ~TracyInstrumentation()");
+        for(auto itr = ctxMap.begin(); itr != ctxMap.end(); ++itr)
+        {
+            // vsg::info("    ", itr->first, ", calling TracyVkDestroy(", itr->second, ")");
+            TracyVkDestroy(itr->second);
+        }
+    }
+};
 
 int main(int argc, char** argv)
 {
@@ -106,6 +276,7 @@ int main(int argc, char** argv)
 
     // create the viewer and assign window(s) to it
     auto viewer = vsg::Viewer::create();
+
     auto window = vsg::Window::create(windowTraits);
     if (!window)
     {
@@ -159,8 +330,24 @@ int main(int argc, char** argv)
     }
 
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
-    commandGraph->recordTraversal = vsgTracy::TracyRecordTraversal::create();
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
+
+    auto instrumentation = TracyInstrumentation::create();
+    viewer->instrumentation = instrumentation;
+
+    // assign instrumentation after settings up recordAndSubmitTasks, but before compile() to allow compile to initialize the Instrumentation with the approach queue etc.
+    for(auto& task : viewer->recordAndSubmitTasks)
+    {
+        task->instrumentation = viewer->instrumentation;
+        if (task->earlyTransferTask) task->earlyTransferTask->instrumentation = task->instrumentation;
+        if (task->lateTransferTask) task->lateTransferTask->instrumentation = task->instrumentation;
+
+        for(auto cg : task->commandGraphs)
+        {
+            commandGraph->instrumentation = task->instrumentation;
+            commandGraph->getOrCreateRecordTraversal()->instrumentation = task->instrumentation;
+        }
+    }
 
     viewer->compile();
 
@@ -175,36 +362,17 @@ int main(int argc, char** argv)
 
     viewer->start_point() = vsg::clock::now();
 
+    FrameMark;
+
     // rendering main loop
-    for(;;)
+    while (viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0))
     {
-        {
-            ZoneScopedN("viewer->advanceToNextFrame()");
-            if (!((viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0)))) break;
+        viewer->handleEvents();
+        viewer->update();
+        viewer->recordAndSubmit();
+        viewer->present();
 
-            FrameMark;
-        }
-
-        {
-            ZoneScopedN("viewer->handleEvents()");
-            // pass any events into EventHandlers assigned to the Viewer
-            viewer->handleEvents();
-        }
-
-        {
-            ZoneScopedN("viewer->update()");
-            viewer->update();
-        }
-
-        {
-            ZoneScopedN("viewer->recordAndSubmit()");
-            viewer->recordAndSubmit();
-        }
-
-        {
-            ZoneScopedN("viewer->present()");
-            viewer->present();
-        }
+        instrumentation->markFrame();
     }
 
     if (reportAverageFrameRate)
