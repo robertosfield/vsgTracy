@@ -38,7 +38,7 @@ int main(int argc, char** argv)
     arguments.read(options);
 
     auto windowTraits = vsg::WindowTraits::create();
-    windowTraits->windowTitle = "vsgviewer";
+    windowTraits->windowTitle = "vsgtracycommandgraph";
     windowTraits->debugLayer = arguments.read({"--debug", "-d"});
     windowTraits->apiDumpLayer = arguments.read({"--api", "-a"});
     windowTraits->synchronizationLayer = arguments.read("--sync");
@@ -70,8 +70,6 @@ int main(int argc, char** argv)
     auto pathFilename = arguments.value(vsg::Path(), "-p");
     auto horizonMountainHeight = arguments.value(0.0, "--hmh");
     auto nearFarRatio = arguments.value<double>(0.001, "--nfr");
-
-    vsg::info("This is a test of the vsgtracyprofiler.");
 
     auto group = vsg::Group::create();
 
@@ -189,7 +187,6 @@ int main(int argc, char** argv)
     }
 
     viewer->start_point() = vsg::clock::now();
-
 
     // rendering main loop
     while (viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0))
