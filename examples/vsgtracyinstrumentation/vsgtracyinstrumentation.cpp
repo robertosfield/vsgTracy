@@ -4,138 +4,9 @@
 #    include <vsgXchange/all.h>
 #endif
 
-#if defined ( __clang__ ) || defined ( __GNUC__ )
-# define TracyFunction __PRETTY_FUNCTION__
-#elif defined ( _MSC_VER )
-# define TracyFunction __FUNCSIG__
-#endif
-
-#include <tracy/Tracy.hpp>
-#include <tracy/TracyVulkan.hpp>
-
-#include <vsg/utils/Instrumentation.h>
+#include "TracyInstrumentation.h"
 
 #include <iostream>
-
-using namespace tracy;
-
-class TracyInstrumentation : public vsg::Inherit<vsg::Instrumentation, TracyInstrumentation>
-{
-public:
-
-    TracyInstrumentation()
-    {
-        vsg::info("tracy TracyInstrumentation()");
-    }
-
-    mutable std::map<vsg::Device*, VkCtx*> ctxMap;
-    mutable VkCtx* ctx = nullptr;
-
-    void markFrame()
-    {
-        FrameMark;
-    }
-
-    void createVkCtx(vsg::ref_ptr<vsg::Device> device, uint32_t queueFamilyIndex)
-    {
-        auto& context = ctxMap[device];
-        if (!context)
-        {
-            auto queue = device->getQueue(queueFamilyIndex, 0);
-            auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-            auto temporaryCommandBuffer = commandPool->allocate();
-            context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
-        }
-    }
-
-    void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
-    {
-        ctx = ctxMap[commandBuffer->getDevice()];
-        if (ctx)
-        {
-            TracyVkCollect(ctx, commandBuffer->vk());
-        }
-    }
-
-    void leaveCommandBuffer() override
-    {
-        ctx = nullptr;
-    }
-
-    void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
-    {
-        if (!GetProfiler().IsConnected())
-        {
-            reference = 0;
-            return;
-        }
-
-        reference = GetProfiler().ConnectionId();
-
-        TracyQueuePrepare( QueueType::ZoneBegin );
-        MemWrite( &item->zoneBegin.time, Profiler::GetTime() );
-        MemWrite( &item->zoneBegin.srcloc, (uint64_t)sl );
-        TracyQueueCommit( zoneBeginThread );
-    }
-
-    void leave(const vsg::SourceLocation*, uint64_t& reference) const override
-    {
-        if( reference==0 || GetProfiler().ConnectionId() != reference ) return;
-
-        TracyQueuePrepare( QueueType::ZoneEnd );
-        MemWrite( &item->zoneEnd.time, Profiler::GetTime() );
-        TracyQueueCommit( zoneEndThread );
-    }
-
-    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& cmdbuf) const override
-    {
-        if (!GetProfiler().IsConnected())
-        {
-            reference = 0;
-            return;
-        }
-
-        reference = GetProfiler().ConnectionId();
-
-        const auto queryId = ctx->NextQueryId();
-        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( cmdbuf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ctx->GetQueryPool(), queryId ) );
-
-        auto item = Profiler::QueueSerial();
-        MemWrite( &item->hdr.type, QueueType::GpuZoneBeginSerial );
-        MemWrite( &item->gpuZoneBegin.cpuTime, Profiler::GetTime() );
-        MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)slcloc );
-        MemWrite( &item->gpuZoneBegin.thread, GetThreadHandle() );
-        MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
-        MemWrite( &item->gpuZoneBegin.context, ctx->GetId() );
-        Profiler::QueueSerialFinish();
-    }
-
-    void leave(const vsg::SourceLocation* /*slcloc*/, uint64_t& reference, vsg::CommandBuffer& cmdbuf) const override
-    {
-        if( reference==0 || GetProfiler().ConnectionId() != reference ) return;
-
-        const auto queryId = ctx->NextQueryId();
-        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( cmdbuf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ctx->GetQueryPool(), queryId ) );
-
-        auto item = Profiler::QueueSerial();
-        MemWrite( &item->hdr.type, QueueType::GpuZoneEndSerial );
-        MemWrite( &item->gpuZoneEnd.cpuTime, Profiler::GetTime() );
-        MemWrite( &item->gpuZoneEnd.thread, GetThreadHandle() );
-        MemWrite( &item->gpuZoneEnd.queryId, uint16_t( queryId ) );
-        MemWrite( &item->gpuZoneEnd.context, ctx->GetId() );
-        Profiler::QueueSerialFinish();
-    }
-
-protected:
-
-    ~TracyInstrumentation()
-    {
-        for(auto itr = ctxMap.begin(); itr != ctxMap.end(); ++itr)
-        {
-            TracyVkDestroy(itr->second);
-        }
-    }
-};
 
 int main(int argc, char** argv)
 {
@@ -281,7 +152,7 @@ int main(int argc, char** argv)
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
 
-    auto instrumentation = TracyInstrumentation::create();
+    auto instrumentation = vsg::TracyInstrumentation::create();
     viewer->instrumentation = instrumentation;
 
     // set up the Tracy VkCtx
