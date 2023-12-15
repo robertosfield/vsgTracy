@@ -45,21 +45,18 @@ public:
         FrameMark;
     }
 
-    void createVkCtx(vsg::ref_ptr<vsg::Device> device, uint32_t queueFamilyIndex)
-    {
-        auto& context = ctxMap[device];
-        if (!context)
-        {
-            auto queue = device->getQueue(queueFamilyIndex, 0);
-            auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-            auto temporaryCommandBuffer = commandPool->allocate();
-            context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
-        }
-    }
-
     void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
     {
-        ctx = ctxMap[commandBuffer->getDevice()];
+        auto device = commandBuffer->getDevice();
+        ctx = ctxMap[device];
+        if (!ctx)
+        {
+            auto queue = device->getQueue(commandBuffer->getCommandPool()->queueFamilyIndex, 0);
+            auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+            auto temporaryCommandBuffer = commandPool->allocate();
+            ctx = ctxMap[commandBuffer->getDevice()] = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
+        }
+
         if (ctx)
         {
             TracyVkCollect(ctx, commandBuffer->vk());

@@ -152,25 +152,12 @@ int main(int argc, char** argv)
     auto commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
     viewer->assignRecordAndSubmitTaskAndPresentation({commandGraph});
 
-    auto instrumentation = vsg::TracyInstrumentation::create();
-    viewer->instrumentation = instrumentation;
+    vsg::ref_ptr<vsg::TracyInstrumentation> instrumentation;
 
-    // set up the Tracy VkCtx
-    instrumentation->createVkCtx(window->getOrCreateDevice(), commandGraph->queueFamily);
-
-    // assign instrumentation after settings up recordAndSubmitTasks, but before compile() to allow compile to initialize the Instrumentation with the approach queue etc.
-    for(auto& task : viewer->recordAndSubmitTasks)
-    {
-        task->instrumentation = viewer->instrumentation;
-        if (task->earlyTransferTask) task->earlyTransferTask->instrumentation = task->instrumentation;
-        if (task->lateTransferTask) task->lateTransferTask->instrumentation = task->instrumentation;
-
-        for(auto cg : task->commandGraphs)
-        {
-            commandGraph->instrumentation = task->instrumentation;
-            commandGraph->getOrCreateRecordTraversal()->instrumentation = task->instrumentation;
-        }
-    }
+#if 0
+    instrumentation = vsg::TracyInstrumentation::create();
+    viewer->assignInstrumentation(instrumentation);
+#endif
 
     viewer->compile();
 
@@ -185,12 +172,17 @@ int main(int argc, char** argv)
 
     viewer->start_point() = vsg::clock::now();
 
-    FrameMark;
-
     // rendering main loop
     while (viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0))
     {
         // vsg::info("viewer->getFrameStamp()->frameCount = ", viewer->getFrameStamp()->frameCount);
+
+        if (!instrumentation && GetProfiler().IsConnected())
+        {
+            vsg::info("Need to assign TracyInstrumentation on the fly");
+            instrumentation = vsg::TracyInstrumentation::create();
+            viewer->assignInstrumentation(instrumentation);
+        }
 
         viewer->handleEvents();
         viewer->update();
@@ -199,7 +191,7 @@ int main(int argc, char** argv)
 
         // vsg::info("end of frame ", viewer->getFrameStamp()->frameCount, "\n");
 
-        instrumentation->markFrame();
+        if (instrumentation) instrumentation->markFrame();
     }
 
     if (reportAverageFrameRate)
