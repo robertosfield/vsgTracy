@@ -1,2 +1,1 @@
-add_subdirectory(vsgtracycommandgraph)
 add_subdirectory(vsgtracyinstrumentation)
