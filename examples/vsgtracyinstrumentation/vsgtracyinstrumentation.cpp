@@ -30,7 +30,6 @@ public:
 
     mutable std::map<vsg::Device*, VkCtx*> ctxMap;
     mutable VkCtx* ctx = nullptr;
-    mutable std::atomic_int zoneDepth = 0;
 
     void markFrame()
     {
@@ -42,104 +41,29 @@ public:
         auto& context = ctxMap[device];
         if (!context)
         {
-            // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT might be appropriate too.
-
             auto queue = device->getQueue(queueFamilyIndex, 0);
             auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
             auto temporaryCommandBuffer = commandPool->allocate();
             context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
-
-            // vsg::info("TracyVkContext(", context, ")");
         }
     }
 
     void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
     {
-#if 0
-        auto& context = ctxMap[commandBuffer->getDevice()];
-        if (!context)
+        ctx = ctxMap[commandBuffer->getDevice()];
+        if (ctx)
         {
-            // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT might be appropriate too.
-            auto device = commandBuffer->getDevice();
-            auto queue = device->getQueue(commandBuffer->getCommandPool()->queueFamilyIndex, 0);
-            auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-            auto temporaryCommandBuffer = commandPool->allocate();
-            context = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
-
-            TracyVkCollect(context, commandBuffer->vk());
-
-            //std::string name("VulkanSceneGraph context");
-            //context->Name(name.c_str(), name.size());
-            // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkContext -> ", context);
+            TracyVkCollect(ctx, commandBuffer->vk());
         }
-        else
-        {
-            TracyVkCollect(context, commandBuffer->vk());
-            // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkCollect for ", context);
-        }
-#else
-        auto context = ctxMap[commandBuffer->getDevice()];
-        if (context)
-        {
-            // vsg::info("TracyVkCollect(", context, commandBuffer->vk());
-            TracyVkCollect(context, commandBuffer->vk());
-        }
-#endif
-        ctx = context;
-
-        ++zoneDepth;
-
-        // TracyVkZone(ctx, commandBuffer->vk(), "ENTER");
-
-
-#if 0
-#  define TracyVkZone( ctx, cmdbuf, name ) TracyVkNamedZoneS( ctx, ___tracy_gpu_zone, cmdbuf, name, TRACY_CALLSTACK, true )
-#  define TracyVkNamedZoneS( ctx, varname, cmdbuf, name, depth, active ) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction,  TracyFile, (uint32_t)TracyLine, 0 }; tracy::VkCtxScope varname( ctx,
-
-        tracy_force_inline VkCtxScope( VkCtx* ctx, const SourceLocationData* srcloc, VkCommandBuffer cmdbuf, int depth, bool is_active )
-#ifdef TRACY_ON_DEMAND
-        : m_active( is_active && GetProfiler().IsConnected() )
-#else
-        : m_active( is_active )
-#endif
-    {
-        if( !m_active ) return;
-        m_cmdbuf = cmdbuf;
-        m_ctx = ctx;
-
-        const auto queryId = ctx->NextQueryId();
-        CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( cmdbuf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ctx->m_query, queryId ) );
-
-        auto item = Profiler::QueueSerialCallstack( Callstack( depth ) );
-        MemWrite( &item->hdr.type, QueueType::GpuZoneBeginCallstackSerial );
-        MemWrite( &item->gpuZoneBegin.cpuTime, Profiler::GetTime() );
-        MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)srcloc );
-        MemWrite( &item->gpuZoneBegin.thread, GetThreadHandle() );
-        MemWrite( &item->gpuZoneBegin.queryId, uint16_t( queryId ) );
-        MemWrite( &item->gpuZoneBegin.context, ctx->GetId() );
-        Profiler::QueueSerialFinish();
-    }
-#endif
-
-
-
-        // vsg::info("enterCommandBuffer(", commandBuffer, ") TracyVkCollect for ", ctx, " zoneDepth = ", zoneDepth.load());
     }
 
     void leaveCommandBuffer() override
     {
-        // vsg::info("leaveCommandBuffer() TracyVkCollect for ", ctx, " zoneDepth = ", zoneDepth.load());
-
-        // vsg::info("leaveCommandBuffer()");
         ctx = nullptr;
-
-        --zoneDepth;
     }
 
     void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
     {
-        ++zoneDepth;
-
         if (!GetProfiler().IsConnected())
         {
             reference = 0;
@@ -156,8 +80,6 @@ public:
 
     void leave(const vsg::SourceLocation*, uint64_t& reference) const override
     {
-        --zoneDepth;
-
         if( reference==0 || GetProfiler().ConnectionId() != reference ) return;
 
         TracyQueuePrepare( QueueType::ZoneEnd );
@@ -165,29 +87,8 @@ public:
         TracyQueueCommit( zoneEndThread );
     }
 
-#if 0
-    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
-    {
-        ++zoneDepth;
-
-        // enter(slcloc, reference);
-
-        vsg::info("enter(", slcloc->function, ", ", slcloc->line, ") depth = ", zoneDepth);
-
-        TracyVkZone(ctx, commandBuffer.vk(), "Test");
-    }
-
-    void leave(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& commandBuffer) const override
-    {
-        --zoneDepth;
-
-        // leave(slcloc, reference);
-    }
-#else
     void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& cmdbuf) const override
     {
-        ++zoneDepth;
-
         if (!GetProfiler().IsConnected())
         {
             reference = 0;
@@ -211,14 +112,10 @@ public:
 
     void leave(const vsg::SourceLocation* /*slcloc*/, uint64_t& reference, vsg::CommandBuffer& cmdbuf) const override
     {
-        --zoneDepth;
-
         if( reference==0 || GetProfiler().ConnectionId() != reference ) return;
 
         const auto queryId = ctx->NextQueryId();
         CONTEXT_VK_FUNCTION_WRAPPER( vkCmdWriteTimestamp( cmdbuf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ctx->GetQueryPool(), queryId ) );
-
-        // vsg::info("    leave() queryId = ", queryId);
 
         auto item = Profiler::QueueSerial();
         MemWrite( &item->hdr.type, QueueType::GpuZoneEndSerial );
@@ -228,16 +125,13 @@ public:
         MemWrite( &item->gpuZoneEnd.context, ctx->GetId() );
         Profiler::QueueSerialFinish();
     }
-#endif
 
 protected:
 
     ~TracyInstrumentation()
     {
-        // vsg::info("tracy ~TracyInstrumentation()");
         for(auto itr = ctxMap.begin(); itr != ctxMap.end(); ++itr)
         {
-            // vsg::info("    ", itr->first, ", calling TracyVkDestroy(", itr->second, ")");
             TracyVkDestroy(itr->second);
         }
     }
