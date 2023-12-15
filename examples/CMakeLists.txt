@@ -1,1 +1,1 @@
-add_subdirectory(vsgtracyprofiler)
+add_subdirectory(vsgtracyinstrumentation)
