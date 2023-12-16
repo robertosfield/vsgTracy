@@ -40,28 +40,28 @@ public:
     mutable std::map<vsg::Device*, VkCtx*> ctxMap;
     mutable VkCtx* ctx = nullptr;
 
-    void enterFrame(vsg::ref_ptr<vsg::FrameStamp>) override {}
+    void enterFrame(vsg::FrameStamp&) override {}
 
-    void leaveFrame(vsg::ref_ptr<vsg::FrameStamp>) override
+    void leaveFrame(vsg::FrameStamp&) override
     {
         FrameMark;
     }
 
-    void enterCommandBuffer(vsg::ref_ptr<vsg::CommandBuffer> commandBuffer) override
+    void enterCommandBuffer(vsg::CommandBuffer& commandBuffer) override
     {
-        auto device = commandBuffer->getDevice();
+        auto device = commandBuffer.getDevice();
         ctx = ctxMap[device];
         if (!ctx)
         {
-            auto queue = device->getQueue(commandBuffer->getCommandPool()->queueFamilyIndex, 0);
+            auto queue = device->getQueue(commandBuffer.getCommandPool()->queueFamilyIndex, 0);
             auto commandPool = vsg::CommandPool::create(device, queue->queueFamilyIndex(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
             auto temporaryCommandBuffer = commandPool->allocate();
-            ctx = ctxMap[commandBuffer->getDevice()] = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
+            ctx = ctxMap[device] = TracyVkContext(device->getPhysicalDevice()->vk(), device->vk(), queue->vk(), temporaryCommandBuffer->vk());
         }
 
         if (ctx)
         {
-            TracyVkCollect(ctx, commandBuffer->vk());
+            TracyVkCollect(ctx, commandBuffer.vk());
         }
     }
 
