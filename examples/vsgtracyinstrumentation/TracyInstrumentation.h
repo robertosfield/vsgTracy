@@ -40,7 +40,9 @@ public:
     mutable std::map<vsg::Device*, VkCtx*> ctxMap;
     mutable VkCtx* ctx = nullptr;
 
-    void markFrame()
+    void enterFrame(vsg::ref_ptr<vsg::FrameStamp>) override {}
+
+    void leaveFrame(vsg::ref_ptr<vsg::FrameStamp>) override
     {
         FrameMark;
     }

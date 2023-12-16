@@ -190,8 +190,6 @@ int main(int argc, char** argv)
         viewer->present();
 
         // vsg::info("end of frame ", viewer->getFrameStamp()->frameCount, "\n");
-
-        if (instrumentation) instrumentation->markFrame();
     }
 
     if (reportAverageFrameRate)
