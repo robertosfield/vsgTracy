@@ -40,6 +40,9 @@ public:
     mutable std::map<vsg::Device*, VkCtx*> ctxMap;
     mutable VkCtx* ctx = nullptr;
 
+    uint32_t cpu_instumentation_level = 3;
+    uint32_t gpu_instumentation_level = 3;
+
     void enterFrame(vsg::FrameStamp&) override {}
 
     void leaveFrame(vsg::FrameStamp&) override
@@ -70,9 +73,9 @@ public:
         ctx = nullptr;
     }
 
-    void enter(const vsg::SourceLocation* sl, uint64_t& reference) const override
+    void enter(const vsg::SourceLocation* slcloc, uint64_t& reference) const override
     {
-        if (!GetProfiler().IsConnected())
+        if (!GetProfiler().IsConnected() || (slcloc->level > cpu_instumentation_level))
         {
             reference = 0;
             return;
@@ -82,7 +85,7 @@ public:
 
         TracyQueuePrepare( QueueType::ZoneBegin );
         MemWrite( &item->zoneBegin.time, Profiler::GetTime() );
-        MemWrite( &item->zoneBegin.srcloc, (uint64_t)sl );
+        MemWrite( &item->zoneBegin.srcloc, (uint64_t)slcloc );
         TracyQueueCommit( zoneBeginThread );
     }
 
@@ -97,7 +100,7 @@ public:
 
     void enter(const vsg::SourceLocation* slcloc, uint64_t& reference, vsg::CommandBuffer& cmdbuf) const override
     {
-        if (!GetProfiler().IsConnected())
+        if (!GetProfiler().IsConnected() || (slcloc->level > gpu_instumentation_level))
         {
             reference = 0;
             return;
